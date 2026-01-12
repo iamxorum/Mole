@@ -75,10 +75,25 @@ func (m model) View() string {
 	if m.scanning {
 		filesScanned, dirsScanned, bytesScanned := m.getScanProgress()
 
-		fmt.Fprintf(&b, "%s%s%s%s Scanning: %s%s files%s, %s%s dirs%s, %s%s%s\n",
+		progressPrefix := ""
+		if m.lastTotalFiles > 0 {
+			percent := float64(filesScanned) / float64(m.lastTotalFiles) * 100
+			// Cap at 100% generally
+			if percent > 100 {
+				percent = 100
+			}
+			// While strictly scanning, cap at 99% to avoid "100% but still working" confusion
+			if m.scanning && percent >= 100 {
+				percent = 99
+			}
+			progressPrefix = fmt.Sprintf(" %s(%.0f%%)%s", colorCyan, percent, colorReset)
+		}
+
+		fmt.Fprintf(&b, "%s%s%s%s Scanning%s: %s%s files%s, %s%s dirs%s, %s%s%s\n",
 			colorCyan, colorBold,
 			spinnerFrames[m.spinner],
 			colorReset,
+			progressPrefix,
 			colorYellow, formatNumber(filesScanned), colorReset,
 			colorYellow, formatNumber(dirsScanned), colorReset,
 			colorGreen, humanizeBytes(bytesScanned), colorReset)
@@ -375,12 +390,12 @@ func (m model) View() string {
 		}
 
 		if deleteCount > 1 {
-			fmt.Fprintf(&b, "%sDelete:%s %d items (%s)  %sPress ⌫ again  |  ESC cancel%s\n",
+			fmt.Fprintf(&b, "%sDelete:%s %d items (%s)  %sPress Enter to confirm  |  ESC cancel%s\n",
 				colorRed, colorReset,
 				deleteCount, humanizeBytes(totalDeleteSize),
 				colorGray, colorReset)
 		} else {
-			fmt.Fprintf(&b, "%sDelete:%s %s (%s)  %sPress ⌫ again  |  ESC cancel%s\n",
+			fmt.Fprintf(&b, "%sDelete:%s %s (%s)  %sPress Enter to confirm  |  ESC cancel%s\n",
 				colorRed, colorReset,
 				m.deleteTarget.Name, humanizeBytes(m.deleteTarget.Size),
 				colorGray, colorReset)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -35,12 +36,14 @@ type scanResult struct {
 	Entries    []dirEntry
 	LargeFiles []fileEntry
 	TotalSize  int64
+	TotalFiles int64
 }
 
 type cacheEntry struct {
 	Entries    []dirEntry
 	LargeFiles []fileEntry
 	TotalSize  int64
+	TotalFiles int64
 	ModTime    time.Time
 	ScanTime   time.Time
 }
@@ -50,6 +53,7 @@ type historyEntry struct {
 	Entries       []dirEntry
 	LargeFiles    []fileEntry
 	TotalSize     int64
+	TotalFiles    int64
 	Selected      int
 	EntryOffset   int
 	LargeSelected int
@@ -114,6 +118,8 @@ type model struct {
 	height               int             // Terminal height
 	multiSelected        map[string]bool // Track multi-selected items by path (safer than index)
 	largeMultiSelected   map[string]bool // Track multi-selected large files by path (safer than index)
+	totalFiles           int64           // Total files found in current/last scan
+	lastTotalFiles       int64           // Total files from previous scan (for progress bar)
 }
 
 func (m model) inOverviewMode() bool {
@@ -192,6 +198,13 @@ func newModel(path string, isOverview bool) model {
 			m.status = "Checking system folders..."
 		} else {
 			m.status = "Ready"
+		}
+	}
+
+	// Try to peek last total files for progress bar, even if cache is stale
+	if !isOverview {
+		if total, err := peekCacheTotalFiles(path); err == nil && total > 0 {
+			m.lastTotalFiles = total
 		}
 	}
 
@@ -355,6 +368,7 @@ func (m model) scanCmd(path string) tea.Cmd {
 				Entries:    cached.Entries,
 				LargeFiles: cached.LargeFiles,
 				TotalSize:  cached.TotalSize,
+				TotalFiles: 0, // Cache doesn't store file count currently, minor UI limitation
 			}
 			return scanResultMsg{result: result, err: nil}
 		}
@@ -441,6 +455,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.entries = filteredEntries
 		m.largeFiles = msg.result.LargeFiles
 		m.totalSize = msg.result.TotalSize
+		m.totalFiles = msg.result.TotalFiles
 		m.status = fmt.Sprintf("Scanned %s", humanizeBytes(m.totalSize))
 		m.clampEntrySelection()
 		m.clampLargeSelection()
@@ -501,7 +516,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.deleting && m.deleteCount != nil {
 				count := atomic.LoadInt64(m.deleteCount)
 				if count > 0 {
-					m.status = fmt.Sprintf("Deleting... %s items removed", formatNumber(count))
+					m.status = fmt.Sprintf("Moving to Trash... %s items", formatNumber(count))
 				}
 			}
 			return m, tickCmd()
@@ -516,7 +531,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Delete confirm flow.
 	if m.deleteConfirm {
 		switch msg.String() {
-		case "delete", "backspace":
+		case "enter":
 			m.deleteConfirm = false
 			m.deleting = true
 			var deleteCount int64
@@ -685,6 +700,9 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		invalidateCache(m.path)
 		m.status = "Refreshing..."
 		m.scanning = true
+		if m.totalFiles > 0 {
+			m.lastTotalFiles = m.totalFiles
+		}
 		atomic.StoreInt64(m.filesScanned, 0)
 		atomic.StoreInt64(m.dirsScanned, 0)
 		atomic.StoreInt64(m.bytesScanned, 0)
@@ -965,9 +983,10 @@ func (m model) enterSelectedDir() (tea.Model, tea.Cmd) {
 		}
 
 		if cached, ok := m.cache[m.path]; ok && !cached.Dirty {
-			m.entries = cloneDirEntries(cached.Entries)
-			m.largeFiles = cloneFileEntries(cached.LargeFiles)
+			m.entries = slices.Clone(cached.Entries)
+			m.largeFiles = slices.Clone(cached.LargeFiles)
 			m.totalSize = cached.TotalSize
+			m.totalFiles = cached.TotalFiles
 			m.selected = cached.Selected
 			m.offset = cached.EntryOffset
 			m.largeSelected = cached.LargeSelected
@@ -977,6 +996,10 @@ func (m model) enterSelectedDir() (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Cached view for %s", displayPath(m.path))
 			m.scanning = false
 			return m, nil
+		}
+		m.lastTotalFiles = 0
+		if total, err := peekCacheTotalFiles(m.path); err == nil && total > 0 {
+			m.lastTotalFiles = total
 		}
 		return m, tea.Batch(m.scanCmd(m.path), tickCmd())
 	}
