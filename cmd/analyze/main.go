@@ -679,7 +679,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("Scanned %s", humanizeBytes(m.totalSize))
 		m.scanning = false
 		return m, nil
-	case "r":
+	case "r", "R":
 		m.multiSelected = make(map[string]bool)
 		m.largeMultiSelected = make(map[string]bool)
 
