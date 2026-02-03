@@ -1104,6 +1104,8 @@ find_app_files() {
                 files_to_clean+=("$p")
             done < <(command find "$parent" -maxdepth 1 -type d -iname "*raycast*" -print0 2> /dev/null)
         done
+        [[ -d "$HOME/Library/Containers/com.raycast.macos.BrowserExtension" ]] && files_to_clean+=("$HOME/Library/Containers/com.raycast.macos.BrowserExtension")
+        [[ -d "$HOME/Library/Containers/com.raycast.macos.RaycastAppIntents" ]] && files_to_clean+=("$HOME/Library/Containers/com.raycast.macos.RaycastAppIntents")
         if [[ -d "$HOME/Library/Caches" ]]; then
             while IFS= read -r -d '' p; do
                 files_to_clean+=("$p")
