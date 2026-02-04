@@ -707,7 +707,13 @@ should_protect_data() {
             ;;
     esac
 
-    # Most apps won't match, return early
+    # Fallback: check against the full DATA_PROTECTED_BUNDLES list
+    for pattern in "${DATA_PROTECTED_BUNDLES[@]}"; do
+        if bundle_matches_pattern "$bundle_id" "$pattern"; then
+            return 0
+        fi
+    done
+
     return 1
 }
 
@@ -772,7 +778,8 @@ should_protect_path() {
     # Matches: .../Library/Group Containers/group.id/...
     if [[ "$path" =~ /Library/Containers/([^/]+) ]] || [[ "$path" =~ /Library/Group\ Containers/([^/]+) ]]; then
         local bundle_id="${BASH_REMATCH[1]}"
-        if should_protect_data "$bundle_id"; then
+        # In uninstall mode, only system components are protected; skip data protection
+        if [[ "${MOLE_UNINSTALL_MODE:-0}" != "1" ]] && should_protect_data "$bundle_id"; then
             return 0
         fi
     fi
@@ -1093,30 +1100,32 @@ find_app_files() {
 
     # 7. Raycast
     if [[ "$bundle_id" == "com.raycast.macos" ]]; then
-        local raycast_parents=(
+        # Standard user directories
+        local raycast_dirs=(
             "$HOME/Library/Application Support"
             "$HOME/Library/Application Scripts"
             "$HOME/Library/Containers"
         )
-        for parent in "${raycast_parents[@]}"; do
-            [[ -d "$parent" ]] || continue
-            while IFS= read -r -d '' p; do
+        for dir in "${raycast_dirs[@]}"; do
+            [[ -d "$dir" ]] && while IFS= read -r -d '' p; do
                 files_to_clean+=("$p")
-            done < <(command find "$parent" -maxdepth 1 -type d -iname "*raycast*" -print0 2> /dev/null)
+            done < <(command find "$dir" -maxdepth 1 -type d -iname "*raycast*" -print0 2> /dev/null)
         done
+
+        # Explicit Raycast container directories (hardcoded leftovers)
         [[ -d "$HOME/Library/Containers/com.raycast.macos.BrowserExtension" ]] && files_to_clean+=("$HOME/Library/Containers/com.raycast.macos.BrowserExtension")
         [[ -d "$HOME/Library/Containers/com.raycast.macos.RaycastAppIntents" ]] && files_to_clean+=("$HOME/Library/Containers/com.raycast.macos.RaycastAppIntents")
-        if [[ -d "$HOME/Library/Caches" ]]; then
-            while IFS= read -r -d '' p; do
-                files_to_clean+=("$p")
-            done < <(command find "$HOME/Library/Caches" -maxdepth 2 -type d -iname "*raycast*" -print0 2> /dev/null)
-        fi
-        local code_storage="$HOME/Library/Application Support/Code/User/globalStorage"
-        if [[ -d "$code_storage" ]]; then
-            while IFS= read -r -d '' p; do
-                files_to_clean+=("$p")
-            done < <(command find "$code_storage" -maxdepth 1 -type d -iname "*raycast*" -print0 2> /dev/null)
-        fi
+
+        # Cache (deeper search)
+        [[ -d "$HOME/Library/Caches" ]] && while IFS= read -r -d '' p; do
+            files_to_clean+=("$p")
+        done < <(command find "$HOME/Library/Caches" -maxdepth 2 -type d -iname "*raycast*" -print0 2> /dev/null)
+
+        # VSCode extension storage
+        local vscode_global="$HOME/Library/Application Support/Code/User/globalStorage"
+        [[ -d "$vscode_global" ]] && while IFS= read -r -d '' p; do
+            files_to_clean+=("$p")
+        done < <(command find "$vscode_global" -maxdepth 1 -type d -iname "*raycast*" -print0 2> /dev/null)
     fi
 
     # Output results
@@ -1212,9 +1221,9 @@ find_app_system_files() {
         done < <(command find /private/var/db/receipts -maxdepth 1 \( -name "*$bundle_id*" \) -print0 2> /dev/null)
     fi
 
-    # Raycast system-level (*raycast* under /Library/Application Support)
-    if [[ "$bundle_id" == "com.raycast.macos" && -d "/Library/Application Support" ]]; then
-        while IFS= read -r -d '' p; do
+    # Raycast system-level files
+    if [[ "$bundle_id" == "com.raycast.macos" ]]; then
+        [[ -d "/Library/Application Support" ]] && while IFS= read -r -d '' p; do
             system_files+=("$p")
         done < <(command find "/Library/Application Support" -maxdepth 1 -type d -iname "*raycast*" -print0 2> /dev/null)
     fi
